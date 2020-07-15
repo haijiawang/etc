@@ -1,0 +1,122 @@
+#!/usr/bin/python
+
+# ~~~~~==============   HOW TO RUN   ==============~~~~~
+# 1) Configure things in CONFIGURATION section
+# 2) Change permissions: chmod +x bot.py
+# 3) Run in loop: while true; do ./bot.py; sleep 1; done
+
+from __future__ import print_function
+
+import sys
+import socket
+import json
+
+# ~~~~~============== CONFIGURATION  ==============~~~~~
+# replace REPLACEME with your team name!
+team_name="ALMONDPUDDING"
+# This variable dictates whether or not the bot is connecting to the prod
+# or test exchange. Be careful with this switch!
+test_mode = False
+
+# This setting changes which test exchange is connected to.
+# 0 is prod-like
+# 1 is slower
+# 2 is empty
+test_exchange_index=0
+prod_exchange_hostname="production"
+
+port=25000 + (test_exchange_index if test_mode else 0)
+exchange_hostname = "test-exch-" + team_name if test_mode else prod_exchange_hostname
+
+# ~~~~~============== NETWORKING CODE ==============~~~~~
+def connect():
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((exchange_hostname, port))
+    s.settimeout(10)
+    return s.makefile('rw', 1)
+
+def write_to_exchange(exchange, obj):
+    json.dump(obj, exchange)
+    exchange.write("\n")
+
+def read_from_exchange(exchange):
+    return json.loads(exchange.readline())
+
+
+# ~~~~~============== MAIN LOOP ==============~~~~~
+
+def bond(log):
+    if log["type"] == 'trade' and log['symbol'] == 'BOND':
+        return True
+    return False
+
+def ask_price(log):
+    return log["price"]
+
+def add_bond(dir, size, price, order_id):
+    return {"type": "add", "symbol": "BOND", "dir": dir,  "price": price, "size": size, "order_id": order_id}
+
+
+def main():
+    exchange = connect()
+    write_to_exchange(exchange, {"type": "hello", "team": team_name.upper()})
+    
+    order_id = 0
+    to_buy_flag = True
+
+    write_to_exchange(exchange, add_bond("SELL", 1, 1001, order_id))
+    log = read_from_exchange(exchange)
+
+    while(log): 
+        # A common mistake people make is to call write_to_exchange() > 1
+        # time for every read_from_exchange() response.
+        # Since many write messages generate marketdata, this will cause an
+        # exponential explosion in pending messages. Please, don't do that!
+        # print("The exchange replied:", log, file=sys.stderr)
+
+        # if log["type"] == 'ack':
+        #     print("The exchange replied:", log, file=sys.stderr)
+
+        # see currently other people's trading prices and place order to match
+        if bond(log):
+            if ask_price(log) > 1000:
+                order_id += 1
+                write_to_exchange(exchange, add_bond("BUY", 1, ask_price(log), order_id))
+                to_buy_flag = False 
+            if ask_price(log) < 1000:
+                order_id += 1
+                write_to_exchange(exchange, add_bond("SELL", 1, ask_price(log), order_id))
+                to_buy_flag = True
+
+        # background bond trade
+        if log["type"] == 'fill' and log["symbol"] == "BOND":
+            print("The exchange replied:", log, file=sys.stderr)
+            if not to_buy_flag: #should sell
+                order_id += 1
+                write_to_exchange(exchange, add_bond("SELL", 1, 1001, order_id))
+                buy_flag = True
+            else:
+                order_id += 1
+                write_to_exchange(exchange, add_bond("BUY", 1, 999, order_id))
+                buy_flag = False
+
+        if log["type"] == 'fill' and log["symbol"] == "BOND":
+            print("The exchange replied:", log, file=sys.stderr)
+            if not to_buy_flag: #should sell
+                order_id += 1
+                write_to_exchange(exchange, add_bond("SELL", 1, 1001, order_id))
+                buy_flag = True
+            else:
+                order_id += 1
+                write_to_exchange(exchange, add_bond("BUY", 1, 999, order_id))
+                buy_flag = False
+
+        #stock: GS
+
+
+        log = read_from_exchange(exchange)
+
+if __name__ == "__main__":
+    main()
+
+
